@@ -5,6 +5,14 @@
   "version": "0.1.0",
   "publisher": "potroast",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bobbybrady/vs-code-flowers.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bobbybrady/vs-code-flowers/issues"
+  },
+  "homepage": "https://github.com/bobbybrady/vs-code-flowers#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
