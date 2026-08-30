@@ -3,7 +3,7 @@
   "displayName": "VS Code Flowers",
   "description": "A calm little pixel-art flower garden inside VS Code.",
   "version": "0.1.0",
-  "publisher": "potroast",
+  "publisher": "PotRoast",
   "license": "MIT",
   "repository": {
     "type": "git",
