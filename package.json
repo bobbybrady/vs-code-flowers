@@ -2,7 +2,7 @@
   "name": "vs-code-flowers",
   "displayName": "VS Code Flowers",
   "description": "A calm little pixel-art flower garden inside VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "PotRoast",
   "license": "MIT",
   "repository": {
@@ -84,6 +84,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "npm run compile && node --test test/*.test.js",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile"
   },

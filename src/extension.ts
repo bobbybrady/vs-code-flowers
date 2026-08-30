@@ -1,18 +1,9 @@
 import * as vscode from 'vscode';
-
-type GardenMode = 'growing' | 'blooming';
-type GrowthSpeed = 'fast' | 'normal' | 'slow';
-type BiomeId = 'meadow' | 'succulent';
-type WildlifeRate = 'off' | 'occasional' | 'frequent';
-
-type HeightClass = 'tall' | 'mid' | 'low';
-
-interface SpeciesDef {
-  id: string;
-  label: string;
-  biome: BiomeId;
-  height: HeightClass;
-}
+import { randomBytes } from 'node:crypto';
+import {
+  BIOMES, BiomeId, DEFAULT_PLANTING, GardenState, GrowthSpeed, HeightClass,
+  normalizeReadyMessage, normalizeState, Plant, SPECIES
+} from './state';
 
 /** Which plant heights look right in each depth band of the bed. */
 const BAND_HEIGHTS: Record<string, HeightClass[]> = {
@@ -26,36 +17,6 @@ const BAND_HEIGHTS: Record<string, HeightClass[]> = {
  * The species catalogue. Adding a plant is a row here plus a sprite set in
  * media/garden.js; nothing else needs to change.
  */
-const SPECIES: readonly SpeciesDef[] = [
-  { id: 'daisy', label: 'Daisy', biome: 'meadow', height: 'mid' },
-  { id: 'sunflower', label: 'Sunflower', biome: 'meadow', height: 'tall' },
-  { id: 'tulip', label: 'Tulip', biome: 'meadow', height: 'mid' },
-  { id: 'lavender', label: 'Lavender', biome: 'meadow', height: 'tall' },
-  { id: 'bluebell', label: 'Bluebell', biome: 'meadow', height: 'mid' },
-  { id: 'pansy', label: 'Pansy', biome: 'meadow', height: 'low' },
-  { id: 'hyacinth', label: 'Hyacinth', biome: 'meadow', height: 'mid' },
-  { id: 'foxglove', label: 'Foxglove', biome: 'meadow', height: 'tall' },
-  { id: 'allium', label: 'Allium', biome: 'meadow', height: 'tall' },
-  { id: 'babysbreath', label: "Baby's Breath", biome: 'meadow', height: 'low' },
-  { id: 'marigold', label: 'Marigold', biome: 'meadow', height: 'low' },
-  { id: 'cosmos', label: 'Cosmos', biome: 'meadow', height: 'mid' },
-  { id: 'echeveria', label: 'Echeveria', biome: 'succulent', height: 'low' },
-  { id: 'aloe', label: 'Aloe', biome: 'succulent', height: 'mid' },
-  { id: 'haworthia', label: 'Haworthia', biome: 'succulent', height: 'low' },
-  { id: 'jade', label: 'Jade', biome: 'succulent', height: 'tall' },
-  { id: 'cactus', label: 'Cactus', biome: 'succulent', height: 'tall' }
-];
-
-const BIOMES: readonly { id: BiomeId; label: string }[] = [
-  { id: 'meadow', label: 'Flower Garden' },
-  { id: 'succulent', label: 'Succulent Garden' }
-];
-
-const DEFAULT_PLANTING: Record<BiomeId, string[]> = {
-  meadow: ['daisy', 'sunflower', 'tulip', 'lavender'],
-  succulent: ['echeveria', 'aloe', 'jade', 'cactus']
-};
-
 /** Seed-to-bloom durations. Users pick a speed, never a per-stage duration. */
 const SPEED_MS: Record<GrowthSpeed, number> = {
   fast: 24 * 60 * 60 * 1000,
@@ -64,54 +25,7 @@ const SPEED_MS: Record<GrowthSpeed, number> = {
 };
 /** Development-only: the whole lifecycle in about 45 seconds. */
 const DEV_LIFECYCLE_MS = 45 * 1000;
-
-interface Plant {
-  id: string;
-  species: string;
-  slot: number;
-  plantedAt: number;
-  lastWateredAt: number | null;
-  /** Persisted because it cannot be recomputed from elapsed time alone. */
-  growthBonusMs: number;
-}
-
-interface BiomeState {
-  selected: string[];
-  plants: Plant[];
-}
-
-interface GardenState {
-  version: number;
-  mode: GardenMode;
-  speed: GrowthSpeed;
-  biome: BiomeId;
-  /** Each biome keeps its own planting, so switching back restores it. */
-  biomes: Record<BiomeId, BiomeState>;
-  lastWateredAt: number | null;
-  waterings: number;
-  /** How often ambient creatures wander through. Decorative only. */
-  wildlife: WildlifeRate;
-  devFast: boolean;
-}
-
 const STATE_KEY = 'gardenState.v1';
-
-function freshState(): GardenState {
-  return {
-    version: 2,
-    mode: 'growing',
-    speed: 'normal',
-    biome: 'meadow',
-    biomes: {
-      meadow: { selected: [...DEFAULT_PLANTING.meadow], plants: [] },
-      succulent: { selected: [...DEFAULT_PLANTING.succulent], plants: [] }
-    },
-    lastWateredAt: null,
-    waterings: 0,
-    wildlife: 'occasional',
-    devFast: false
-  };
-}
 
 export function activate(context: vscode.ExtensionContext): void {
   // One provider serves the Explorer section, the panel view and the Activity
@@ -151,9 +65,10 @@ class FlowersViewProvider implements vscode.WebviewViewProvider {
 
       // The webview owns the slot tables (they are composition), so it reports
       // how many slots the active biome has and we reconcile plants to fit.
-      if (type === 'ready' && typeof message.slotCount === 'number') {
-        this.bands = Array.isArray(message.bands) ? (message.bands as string[]) : [];
-        this.reconcile(state, Math.max(0, Math.floor(message.slotCount)));
+      const ready = normalizeReadyMessage(message, state.biome);
+      if (ready) {
+        this.bands = ready.bands;
+        this.reconcile(state, ready.slotCount);
         await this.saveAndSend(state);
         return;
       }
@@ -293,35 +208,7 @@ class FlowersViewProvider implements vscode.WebviewViewProvider {
   }
 
   private loadState(): GardenState {
-    const saved = this.context.globalState.get<Record<string, unknown>>(STATE_KEY);
-    if (!saved) return freshState();
-    const base = freshState();
-    // Migrate v1 gardens (single flowerType, one global plantedAt) without
-    // throwing away how long they have already been growing.
-    if (typeof saved.version !== 'number') {
-      const legacySpecies = typeof saved.flowerType === 'string' ? saved.flowerType : 'daisy';
-      const known = SPECIES.some(s => s.id === legacySpecies && s.biome === 'meadow');
-      base.biomes.meadow.selected = known
-        ? [...new Set([legacySpecies, ...DEFAULT_PLANTING.meadow])]
-        : [...DEFAULT_PLANTING.meadow];
-      base.lastWateredAt = typeof saved.lastWateredAt === 'number' ? saved.lastWateredAt : null;
-      base.waterings = typeof saved.waterings === 'number' ? saved.waterings : 0;
-      return base;
-    }
-    const merged = { ...base, ...(saved as unknown as GardenState) };
-    merged.biomes = {
-      meadow: { ...base.biomes.meadow, ...(saved.biomes as any)?.meadow },
-      succulent: { ...base.biomes.succulent, ...(saved.biomes as any)?.succulent }
-    };
-    for (const id of Object.keys(merged.biomes) as BiomeId[]) {
-      const b = merged.biomes[id];
-      b.selected = (b.selected ?? []).filter(x => SPECIES.some(s => s.id === x && s.biome === id));
-      if (b.selected.length === 0) b.selected = [...DEFAULT_PLANTING[id]];
-      b.plants = (b.plants ?? []).filter(p => p && b.selected.includes(p.species));
-    }
-    if (!merged.devFast) merged.devFast = false;
-    if (merged.wildlife !== 'off' && merged.wildlife !== 'frequent') merged.wildlife = 'occasional';
-    return merged;
+    return normalizeState(this.context.globalState.get(STATE_KEY), this.isDev);
   }
 
   private async saveAndSend(state: GardenState): Promise<void> {
@@ -353,7 +240,7 @@ class FlowersViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <link rel="stylesheet" href="${styleUri}">
 </head>
 <body>
@@ -395,6 +282,5 @@ class FlowersViewProvider implements vscode.WebviewViewProvider {
 }
 
 function makeNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return randomBytes(24).toString('base64');
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+Security and reliability patch.
+
+- Validate persisted garden data and safely recover from malformed state.
+- Validate webview messages, ignore stale biome updates and cap garden slot allocation.
+- Tighten the webview Content Security Policy and use secure script nonces.
+- Add focused tests for state migration, corrupted-state recovery and message boundaries.
+
 ## 0.1.0
 
 First release.

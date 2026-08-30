@@ -3,6 +3,8 @@
 A calm pixel-art garden that lives in your editor. It grows with real elapsed
 time, or blooms permanently if you would rather just have flowers.
 
+Current release: **0.1.1**
+
 ## Using it
 
 The garden appears in two places — the **Flowers** icon in the Activity Bar, and
@@ -52,6 +54,7 @@ suppressed entirely under reduced-motion settings.
 ## Development
 
 - `npm run compile` — compile TypeScript
+- `npm test` — compile and run the state and message-boundary tests
 - `npm run watch` — compile as files change
 - **F5** — launch an Extension Development Host
 
